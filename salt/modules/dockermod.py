@@ -5125,7 +5125,7 @@ def _prepare_trans_tar(name, mods=None, saltenv='base', pillar=None):
     Prepares a self contained tarball that has the state
     to be applied in the container
     '''
-    chunks = _compile_state(mods, saltenv)
+    chunks = _compile_state(mods, saltenv, pillar)
     # reuse it from salt.ssh, however this function should
     # be somewhere else
     refs = salt.client.ssh.state.lowstate_file_refs(chunks)
@@ -5137,11 +5137,11 @@ def _prepare_trans_tar(name, mods=None, saltenv='base', pillar=None):
     return trans_tar
 
 
-def _compile_state(mods=None, saltenv='base'):
+def _compile_state(mods=None, saltenv='base', pillar=None):
     '''
     Generates the chunks of lowdata from the list of modules
     '''
-    st_ = HighState(__opts__)
+    st_ = HighState(__opts__, pillar_override=pillar)
 
     high_data, errors = st_.render_highstate({saltenv: mods})
     high_data, ext_errors = st_.state.reconcile_extend(high_data)
@@ -5267,7 +5267,7 @@ def call(name, function, *args, **kwargs):
         run_all(name, subprocess.list2cmdline(rm_thin_argv))
 
 
-def sls(name, mods=None, saltenv='base', **kwargs):
+def sls(name, mods=None, saltenv='base', pillar=None, **kwargs):
     '''
     Apply the states defined by the specified SLS modules to the running
     container
@@ -5300,8 +5300,9 @@ def sls(name, mods=None, saltenv='base', **kwargs):
     grains = call(name, 'grains.items')
 
     # compile pillar with container grains
-    pillar = _gather_pillar(saltenv, {}, **grains)
-
+    if pillar is None:
+        pillar = {}
+    pillar = _gather_pillar(saltenv, pillar, **grains)
     trans_tar = _prepare_trans_tar(name, mods=mods, saltenv=saltenv, pillar=pillar)
 
     # where to put the salt trans tar
@@ -5423,3 +5424,8 @@ def sls_build(name, base='opensuse/python', mods=None, saltenv='base',
         stop(id_)
         rm_(id_)
     return ret
+
+__outputter__ = {
+    'sls': 'highstate',
+    'sls_build': 'highstate',
+    }

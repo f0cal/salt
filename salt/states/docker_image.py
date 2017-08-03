@@ -68,6 +68,7 @@ def present(name,
             sls=None,
             base='opensuse/python',
             saltenv='base',
+            pillar=None,
             **kwargs):
     '''
     Ensure that an image is present. The image can either be pulled from a
@@ -218,11 +219,14 @@ def present(name,
     elif sls:
         if isinstance(sls, list):
             sls = ','.join(sls)
+        else:
+            raise TypeError()
         try:
             image_update = __salt__['dockerng.sls_build'](name=image,
                                                           base=base,
                                                           mods=sls,
-                                                          saltenv=saltenv)
+                                                          saltenv=saltenv,
+                                                          pillar=pillar)
         except Exception as exc:
             ret['comment'] = (
                 'Encountered error using sls {0} for building {1}: {2}'
