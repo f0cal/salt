@@ -209,6 +209,7 @@ import salt.utils.thin
 import salt.pillar
 import salt.exceptions
 import salt.fileclient
+import salt.output
 
 from salt.state import HighState
 import salt.client.ssh.state
@@ -5211,7 +5212,8 @@ def call(name, function, *args, **kwargs):
     # make thin_dest_path in the container
     ret = run_all(name, subprocess.list2cmdline(mkdirp_thin_argv))
     if ret['retcode'] != 0:
-        return {'result': False, 'comment': ret['stderr']}
+        comment = salt.output.display_output(ret['stderr'], 'nested', __opts__)
+        return {'result': False, 'comment': comment}
 
     if function is None:
         raise CommandExecutionError('Missing function parameter')
@@ -5229,7 +5231,8 @@ def call(name, function, *args, **kwargs):
                  ).format(thin_dest_path, os.path.basename(thin_path))]
     ret = run_all(name, subprocess.list2cmdline(untar_cmd))
     if ret['retcode'] != 0:
-        return {'result': False, 'comment': ret['stderr']}
+        comment = salt.output.display_output(ret['stderr'], 'nested', __opts__)
+        return {'result': False, 'comment': comment}
 
     try:
         salt_argv = [
@@ -5311,7 +5314,8 @@ def sls(name, mods=None, saltenv='base', pillar=None, **kwargs):
     # put_archive requires the path to exist
     ret = run_all(name, subprocess.list2cmdline(mkdirp_trans_argv))
     if ret['retcode'] != 0:
-        return {'result': False, 'comment': ret['stderr']}
+        comment = salt.output.display_output(ret['stderr'], 'nested', __opts__)
+        return {'result': False, 'comment': comment}
 
     ret = None
     try:
