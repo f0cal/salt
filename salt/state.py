@@ -969,22 +969,65 @@ class State(object):
         elif data[u'state'] in (u'pkg', u'ports'):
             self.module_refresh()
 
-    def verify_ret(self, ret):
+    @staticmethod
+    def verify_ret(ret):
         '''
-        Verify the state return data
+        Perform basic verification of the raw state return data
         '''
         if not isinstance(ret, dict):
             raise SaltException(
-                    u'Malformed state return, return must be a dict'
-                    )
+                u'Malformed state return, return must be a dict'
+            )
         bad = []
         for val in [u'name', u'result', u'changes', u'comment']:
             if val not in ret:
                 bad.append(val)
         if bad:
-            raise SaltException(
-                u'The following keys were not present in the state '
-                u'return: {0}'.format(u','.join(bad)))
+            m = u'The following keys were not present in the state return: {0}'
+            raise SaltException(m.format(u','.join(bad)))
+
+    @staticmethod
+    def munge_ret_for_export(ret):
+        '''
+        Process raw state return data to make it suitable for export,
+        to ensure consistency of the data format seen by external systems
+        '''
+        # We support lists of strings for ret['comment'] internal
+        # to the state system for improved ergonomics.
+        # However, to maintain backwards compatability with external tools,
+        # the list representation is not allowed to leave the state system,
+        # and should be converted like this at external boundaries.
+        if isinstance(ret[u'comment'], list):
+            ret[u'comment'] = u'\n'.join(ret[u'comment'])
+
+    @staticmethod
+    def verify_ret_for_export(ret):
+        '''
+        Verify the state return data for export outside the state system
+        '''
+        State.verify_ret(ret)
+
+        for key in [u'name', u'comment']:
+            if not isinstance(ret[key], six.string_types):
+                msg = (
+                    u'The value for the {0} key in the state return '
+                    u'must be a string, found {1}'
+                )
+                raise SaltException(msg.format(key, repr(ret[key])))
+
+        if ret[u'result'] not in [True, False, None]:
+            msg = (
+                u'The value for the result key in the state return '
+                u'must be True, False, or None, found {0}'
+            )
+            raise SaltException(msg.format(repr(ret[u'result'])))
+
+        if not isinstance(ret[u'changes'], dict):
+            msg = (
+                u'The value for the changes key in the state return '
+                u'must be a dict, found {0}'
+            )
+            raise SaltException(msg.format(repr(ret[u'changes'])))
 
     def verify_data(self, data):
         '''
@@ -1847,6 +1890,7 @@ class State(object):
             if u'check_cmd' in low and u'{0[state]}.mod_run_check_cmd'.format(low) not in self.states:
                 ret.update(self._run_check_cmd(low))
             self.verify_ret(ret)
+            self.munge_ret_for_export(ret)
         except Exception:
             trb = traceback.format_exc()
             # There are a number of possibilities to not have the cdata
@@ -1874,6 +1918,7 @@ class State(object):
 
             self.state_con.pop('runas')
             self.state_con.pop('runas_password')
+            self.verify_ret_for_export(ret)
 
         # If format_call got any warnings, let's show them to the user
         if u'warnings' in cdata:
@@ -2127,11 +2172,14 @@ class State(object):
                                 reqs[r_state].append(chunk)
                             continue
                         try:
-                            if (fnmatch.fnmatch(chunk[u'name'], req_val) or
-                                fnmatch.fnmatch(chunk[u'__id__'], req_val)):
-                                if req_key == u'id' or chunk[u'state'] == req_key:
-                                    found = True
-                                    reqs[r_state].append(chunk)
+                            if isinstance(req_val, six.string_types):
+                                if (fnmatch.fnmatch(chunk[u'name'], req_val) or
+                                    fnmatch.fnmatch(chunk[u'__id__'], req_val)):
+                                    if req_key == u'id' or chunk[u'state'] == req_key:
+                                        found = True
+                                        reqs[r_state].append(chunk)
+                            else:
+                                raise KeyError
                         except KeyError as exc:
                             raise SaltRenderError(
                                 u'Could not locate requisite of [{0}] present in state with name [{1}]'.format(
@@ -2309,13 +2357,17 @@ class State(object):
                         req_val = lreq[req_key]
                         comment += \
                             u'{0}{1}: {2}\n'.format(u' ' * 23, req_key, req_val)
-                running[tag] = {u'changes': {},
-                                u'result': False,
-                                u'comment': comment,
-                                u'__run_num__': self.__run_num,
-                                u'__sls__': low[u'__sls__']}
+                if low.get('__prereq__'):
+                    run_dict = self.pre
+                else:
+                    run_dict = running
+                run_dict[tag] = {u'changes': {},
+                                 u'result': False,
+                                 u'comment': comment,
+                                 u'__run_num__': self.__run_num,
+                                 u'__sls__': low[u'__sls__']}
                 self.__run_num += 1
-                self.event(running[tag], len(chunks), fire_event=low.get(u'fire_event'))
+                self.event(run_dict[tag], len(chunks), fire_event=low.get(u'fire_event'))
                 return running
             for chunk in reqs:
                 # Check to see if the chunk has been run, only run it if
