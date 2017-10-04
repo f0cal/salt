@@ -170,6 +170,14 @@ def clean_old_jobs(opts):
 
 
 def mk_key(opts, user):
+    if HAS_PWD:
+        uid = None
+        try:
+            uid = pwd.getpwnam(user).pw_uid
+        except KeyError:
+            # User doesn't exist in the system
+            if opts['client_acl_verify']:
+                return None
     if salt.utils.platform.is_windows():
         # The username may contain '\' if it is in Windows
         # 'DOMAIN\username' format. Fix this for the keyfile path.
@@ -197,9 +205,9 @@ def mk_key(opts, user):
     # Write access is necessary since on subsequent runs, if the file
     # exists, it needs to be written to again. Windows enforces this.
     os.chmod(keyfile, 0o600)
-    if HAS_PWD:
+    if HAS_PWD and uid is not None:
         try:
-            os.chown(keyfile, pwd.getpwnam(user).pw_uid, -1)
+            os.chown(keyfile, uid, -1)
         except OSError:
             # The master is not being run as root and can therefore not
             # chown the key file
@@ -214,27 +222,26 @@ def access_keys(opts):
     '''
     # TODO: Need a way to get all available users for systems not supported by pwd module.
     #       For now users pattern matching will not work for publisher_acl.
-    users = []
     keys = {}
     publisher_acl = opts['publisher_acl']
     acl_users = set(publisher_acl.keys())
     if opts.get('user'):
         acl_users.add(opts['user'])
     acl_users.add(salt.utils.get_user())
+    for user in acl_users:
+        log.info('Preparing the %s key for local communication', user)
+        key = mk_key(opts, user)
+        if key is not None:
+            keys[user] = key
+
+    # Check other users matching ACL patterns
     if opts['client_acl_verify'] and HAS_PWD:
         log.profile('Beginning pwd.getpwall() call in masterarpi access_keys function')
         for user in pwd.getpwall():
-            users.append(user.pw_name)
-        log.profile('End pwd.getpwall() call in masterarpi access_keys function')
-    for user in acl_users:
-        log.info('Preparing the %s key for local communication', user)
-        keys[user] = mk_key(opts, user)
-
-    # Check other users matching ACL patterns
-    if HAS_PWD:
-        for user in users:
+            user = user.pw_name
             if user not in keys and salt.utils.check_whitelist_blacklist(user, whitelist=acl_users):
                 keys[user] = mk_key(opts, user)
+        log.profile('End pwd.getpwall() call in masterarpi access_keys function')
 
     return keys
 
@@ -550,11 +557,12 @@ class RemoteFuncs(object):
         if match_type.lower() == 'compound':
             match_type = 'compound_pillar_exact'
         checker = salt.utils.minions.CkMinions(self.opts)
-        minions = checker.check_minions(
+        _res = checker.check_minions(
                 load['tgt'],
                 match_type,
                 greedy=False
                 )
+        minions = _res['minions']
         for minion in minions:
             fdata = self.cache.fetch('minions/{0}'.format(minion), 'mine')
             if isinstance(fdata, dict):
@@ -718,7 +726,7 @@ class RemoteFuncs(object):
         Handle the return data sent from the minions
         '''
         # Generate EndTime
-        endtime = salt.utils.jid.jid_to_time(salt.utils.jid.gen_jid())
+        endtime = salt.utils.jid.jid_to_time(salt.utils.jid.gen_jid(self.opts))
         # If the return data is invalid, just ignore it
         if any(key not in load for key in ('return', 'jid', 'id')):
             return False
@@ -872,9 +880,10 @@ class RemoteFuncs(object):
                 pub_load['tgt_type'] = load['tgt_type']
         ret = {}
         ret['jid'] = self.local.cmd_async(**pub_load)
-        ret['minions'] = self.ckminions.check_minions(
+        _res = self.ckminions.check_minions(
                 load['tgt'],
                 pub_load['tgt_type'])
+        ret['minions'] = _res['minions']
         auth_cache = os.path.join(
                 self.opts['cachedir'],
                 'publish_auth')
@@ -1011,30 +1020,33 @@ class LocalFuncs(object):
         '''
         Send a master control function back to the runner system
         '''
-        if 'token' in load:
-            auth_type = 'token'
-            err_name = 'TokenAuthenticationError'
-            token = self.loadauth.authenticate_token(load)
-            if not token:
-                return dict(error=dict(name=err_name,
-                                       message='Authentication failure of type "token" occurred.'))
-            username = token['name']
-            auth_list = self.loadauth.get_auth_list(load, token)
-        else:
-            auth_type = 'eauth'
-            err_name = 'EauthAuthenticationError'
-            username = load.get('username', 'UNKNOWN')
-            if not self.loadauth.authenticate_eauth(load):
-                return dict(error=dict(name=err_name,
-                                       message=('Authentication failure of type "eauth" occurred '
-                                                'for user {0}.').format(username)))
-            auth_list = self.loadauth.get_auth_list(load)
+        # All runner opts pass through eauth
+        auth_type, err_name, key = self._prep_auth_info(load)
 
-        if not self.ckminions.runner_check(auth_list, load['fun'], load['kwarg']):
-            return dict(error=dict(name=err_name,
-                                   message=('Authentication failure of type "{0}" occurred '
-                                            'for user {1}.').format(auth_type, username)))
+        # Authenticate
+        auth_check = self.loadauth.check_authentication(load, auth_type)
+        error = auth_check.get('error')
 
+        if error:
+            # Authentication error occurred: do not continue.
+            return {'error': error}
+
+        # Authorize
+        runner_check = self.ckminions.runner_check(
+            auth_check.get('auth_list', []),
+            load['fun'],
+            load['kwarg']
+        )
+        username = auth_check.get('username')
+        if not runner_check:
+            return {'error': {'name': err_name,
+                              'message': 'Authentication failure of type "{0}" occurred '
+                                         'for user {1}.'.format(auth_type, username)}}
+        elif isinstance(runner_check, dict) and 'error' in runner_check:
+            # A dictionary with an error name/message was handled by ckminions.runner_check
+            return runner_check
+
+        # Authorized. Do the job!
         try:
             fun = load.pop('fun')
             runner_client = salt.runner.RunnerClient(self.opts)
@@ -1043,51 +1055,49 @@ class LocalFuncs(object):
                                        username)
         except Exception as exc:
             log.error('Exception occurred while '
-                    'introspecting {0}: {1}'.format(fun, exc))
-            return dict(error=dict(name=exc.__class__.__name__,
-                                   args=exc.args,
-                                   message=str(exc)))
+                      'introspecting {0}: {1}'.format(fun, exc))
+            return {'error': {'name': exc.__class__.__name__,
+                              'args': exc.args,
+                              'message': str(exc)}}
 
     def wheel(self, load):
         '''
         Send a master control function back to the wheel system
         '''
         # All wheel ops pass through eauth
-        if 'token' in load:
-            auth_type = 'token'
-            err_name = 'TokenAuthenticationError'
-            token = self.loadauth.authenticate_token(load)
-            if not token:
-                return dict(error=dict(name=err_name,
-                                       message='Authentication failure of type "token" occurred.'))
-            username = token['name']
-            auth_list = self.loadauth.get_auth_list(load, token)
-        elif 'eauth' in load:
-            auth_type = 'eauth'
-            err_name = 'EauthAuthenticationError'
-            username = load.get('username', 'UNKNOWN')
-            if not self.loadauth.authenticate_eauth(load):
-                return dict(error=dict(name=err_name,
-                                       message=('Authentication failure of type "eauth" occurred for '
-                                                'user {0}.').format(username)))
-            auth_list = self.loadauth.get_auth_list(load)
-        else:
-            auth_type = 'user'
-            err_name = 'UserAuthenticationError'
-            username = load.get('username', 'UNKNOWN')
-            if not self.loadauth.authenticate_key(load, self.key):
-                return dict(error=dict(name=err_name,
-                                       message=('Authentication failure of type "user" occurred for '
-                                                'user {0}.').format(username)))
+        auth_type, err_name, key = self._prep_auth_info(load)
 
+        # Authenticate
+        auth_check = self.loadauth.check_authentication(
+            load,
+            auth_type,
+            key=key,
+            show_username=True
+        )
+        error = auth_check.get('error')
+
+        if error:
+            # Authentication error occurred: do not continue.
+            return {'error': error}
+
+        # Authorize
+        username = auth_check.get('username')
         if auth_type != 'user':
-            if not self.ckminions.wheel_check(auth_list, load['fun'], load['kwarg']):
-                return dict(error=dict(name=err_name,
-                                       message=('Authentication failure of type "{0}" occurred for '
-                                                'user {1}.').format(auth_type, username)))
+            wheel_check = self.ckminions.wheel_check(
+                auth_check.get('auth_list', []),
+                load['fun'],
+                load['kwarg']
+            )
+            if not wheel_check:
+                return {'error': {'name': err_name,
+                                  'message': 'Authentication failure of type "{0}" occurred for '
+                                             'user {1}.'.format(auth_type, username)}}
+            elif isinstance(wheel_check, dict) and 'error' in wheel_check:
+                # A dictionary with an error name/message was handled by ckminions.wheel_check
+                return wheel_check
 
         # Authenticated. Do the job.
-        jid = salt.utils.jid.gen_jid()
+        jid = salt.utils.jid.gen_jid(self.opts)
         fun = load.pop('fun')
         tag = salt.utils.event.tagify(jid, prefix='wheel')
         data = {'fun': "wheel.{0}".format(fun),
@@ -1104,7 +1114,7 @@ class LocalFuncs(object):
                     'data': data}
         except Exception as exc:
             log.error('Exception occurred while '
-                    'introspecting {0}: {1}'.format(fun, exc))
+                      'introspecting {0}: {1}'.format(fun, exc))
             data['return'] = 'Exception occurred in wheel {0}: {1}: {2}'.format(
                                         fun,
                                         exc.__class__.__name__,
@@ -1157,11 +1167,12 @@ class LocalFuncs(object):
 
         # Retrieve the minions list
         delimiter = load.get('kwargs', {}).get('delimiter', DEFAULT_TARGET_DELIM)
-        minions = self.ckminions.check_minions(
+        _res = self.ckminions.check_minions(
             load['tgt'],
             load.get('tgt_type', 'glob'),
             delimiter
         )
+        minions = _res['minions']
 
         # Check for external auth calls
         if extra.get('token', False):
@@ -1368,3 +1379,18 @@ class LocalFuncs(object):
                     },
                 'pub': pub_load
                 }
+
+    def _prep_auth_info(self, load):
+        key = None
+        if 'token' in load:
+            auth_type = 'token'
+            err_name = 'TokenAuthenticationError'
+        elif 'eauth' in load:
+            auth_type = 'eauth'
+            err_name = 'EauthAuthenticationError'
+        else:
+            auth_type = 'user'
+            err_name = 'UserAuthenticationError'
+            key = self.key
+
+        return auth_type, err_name, key

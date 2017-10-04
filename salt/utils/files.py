@@ -25,6 +25,7 @@ from salt.utils.decorators.jinja import jinja_filter
 
 # Import 3rd-party libs
 from salt.ext import six
+from salt.ext.six.moves import range
 try:
     import fcntl
     HAS_FCNTL = True
@@ -34,9 +35,20 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
+LOCAL_PROTOS = ('', 'file')
 REMOTE_PROTOS = ('http', 'https', 'ftp', 'swift', 's3')
 VALID_PROTOS = ('salt', 'file') + REMOTE_PROTOS
 TEMPFILE_PREFIX = '__salt.tmp.'
+
+HASHES = {
+    'sha512': 128,
+    'sha384': 96,
+    'sha256': 64,
+    'sha224': 56,
+    'sha1': 40,
+    'md5': 32,
+}
+HASHES_REVMAP = dict([(y, x) for x, y in six.iteritems(HASHES)])
 
 
 def guess_archive_type(name):
@@ -473,6 +485,8 @@ def safe_filename_leaf(file_basename):
     windows is \\ / : * ? " < > | posix is /
 
     .. versionadded:: 2017.7.2
+
+    :codeauthor: Damon Atkins <https://github.com/damon-atkins>
     '''
     def _replace(re_obj):
         return urllib.quote(re_obj.group(0), safe=u'')
@@ -485,16 +499,74 @@ def safe_filename_leaf(file_basename):
     return re.sub(u'[\\\\:/*?"<>|]', _replace, file_basename, flags=re.UNICODE)
 
 
-def safe_filepath(file_path_name):
+def safe_filepath(file_path_name, dir_sep=None):
     '''
     Input the full path and filename, splits on directory separator and calls safe_filename_leaf for
-    each part of the path.
+    each part of the path. dir_sep allows coder to force a directory separate to a particular character
 
     .. versionadded:: 2017.7.2
+
+    :codeauthor: Damon Atkins <https://github.com/damon-atkins>
     '''
+    if not dir_sep:
+        dir_sep = os.sep
+    # Normally if file_path_name or dir_sep is Unicode then the output will be Unicode
+    # This code ensure the output type is the same as file_path_name
+    if not isinstance(file_path_name, six.text_type) and isinstance(dir_sep, six.text_type):
+        dir_sep = dir_sep.encode('ascii')  # This should not be executed under PY3
+    # splitdrive only set drive on windows platform
     (drive, path) = os.path.splitdrive(file_path_name)
-    path = os.sep.join([safe_filename_leaf(file_section) for file_section in file_path_name.rsplit(os.sep)])
+    path = dir_sep.join([safe_filename_leaf(file_section) for file_section in path.rsplit(dir_sep)])
     if drive:
-        return os.sep.join([drive, path])
-    else:
-        return path
+        path = dir_sep.join([drive, path])
+    return path
+
+
+@jinja_filter('is_text_file')
+def is_text_file(fp_, blocksize=512):
+    '''
+    Uses heuristics to guess whether the given file is text or binary,
+    by reading a single block of bytes from the file.
+    If more than 30% of the chars in the block are non-text, or there
+    are NUL ('\x00') bytes in the block, assume this is a binary file.
+    '''
+    int2byte = (lambda x: bytes((x,))) if six.PY3 else chr
+    text_characters = (
+        b''.join(int2byte(i) for i in range(32, 127)) +
+        b'\n\r\t\f\b')
+    try:
+        block = fp_.read(blocksize)
+    except AttributeError:
+        # This wasn't an open filehandle, so treat it as a file path and try to
+        # open the file
+        try:
+            with fopen(fp_, 'rb') as fp2_:
+                block = fp2_.read(blocksize)
+        except IOError:
+            # Unable to open file, bail out and return false
+            return False
+    if b'\x00' in block:
+        # Files with null bytes are binary
+        return False
+    elif not block:
+        # An empty file is considered a valid text file
+        return True
+    try:
+        block.decode('utf-8')
+        return True
+    except UnicodeDecodeError:
+        pass
+
+    nontext = block.translate(None, text_characters)
+    return float(len(nontext)) / len(block) <= 0.30
+
+
+def remove(path):
+    '''
+    Runs os.remove(path) and suppresses the OSError if the file doesn't exist
+    '''
+    try:
+        os.remove(path)
+    except OSError as exc:
+        if exc.errno != errno.ENOENT:
+            raise
