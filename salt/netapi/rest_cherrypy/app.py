@@ -932,20 +932,6 @@ def urlencoded_processor(entity):
 
     :param entity: raw POST data
     '''
-    if six.PY3:
-        # https://github.com/cherrypy/cherrypy/pull/1572
-        contents = six.StringIO()
-        entity.fp.read(fp_out=contents)
-        contents.seek(0)
-        body_str = contents.read()
-        body_bytes = salt.utils.stringutils.to_bytes(body_str)
-        body_bytes = six.BytesIO(body_bytes)
-        body_bytes.seek(0)
-        # Patch fp
-        entity.fp = body_bytes
-        del contents
-    # First call out to CherryPy's default processor
-    cherrypy._cpreqbody.process_urlencoded(entity)
     cherrypy._cpreqbody.process_urlencoded(entity)
     cherrypy.serving.request.unserialized_data = entity.params
     cherrypy.serving.request.raw_body = ''
@@ -958,15 +944,7 @@ def json_processor(entity):
 
     :param entity: raw POST data
     '''
-    if six.PY2:
-        body = entity.fp.read()
-    else:
-        # https://github.com/cherrypy/cherrypy/pull/1572
-        contents = six.StringIO()
-        body = entity.fp.read(fp_out=contents)
-        contents.seek(0)
-        body = contents.read()
-        del contents
+    body = str(entity.fp.read(), 'utf-8')
     try:
         cherrypy.serving.request.unserialized_data = json.loads(body)
     except ValueError:
@@ -982,14 +960,7 @@ def yaml_processor(entity):
 
     :param entity: raw POST data
     '''
-    if six.PY2:
-        body = entity.fp.read()
-    else:
-        # https://github.com/cherrypy/cherrypy/pull/1572
-        contents = six.StringIO()
-        body = entity.fp.read(fp_out=contents)
-        contents.seek(0)
-        body = contents.read()
+    body = str(entity.fp.read(), 'utf-8')
     try:
         cherrypy.serving.request.unserialized_data = yaml.safe_load(body)
     except ValueError:
@@ -1008,14 +979,7 @@ def text_processor(entity):
 
     :param entity: raw POST data
     '''
-    if six.PY2:
-        body = entity.fp.read()
-    else:
-        # https://github.com/cherrypy/cherrypy/pull/1572
-        contents = six.StringIO()
-        body = entity.fp.read(fp_out=contents)
-        contents.seek(0)
-        body = contents.read()
+    body = str(entity.fp.read(), 'utf-8')
     try:
         cherrypy.serving.request.unserialized_data = json.loads(body)
     except ValueError:
