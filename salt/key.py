@@ -931,7 +931,7 @@ class Key(object):
         Return the fingerprint for a specified key
         '''
         if hash_type is None:
-            hash_type = __opts__['hash_type']
+            hash_type = self.opts['hash_type']
 
         matches = self.name_match(match, True)
         ret = {}
@@ -950,7 +950,7 @@ class Key(object):
         Return fingerprints for all keys
         '''
         if hash_type is None:
-            hash_type = __opts__['hash_type']
+            hash_type = self.opts['hash_type']
 
         ret = {}
         for status, keys in six.iteritems(self.all_keys()):

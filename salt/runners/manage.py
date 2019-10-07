@@ -32,7 +32,7 @@ import salt.wheel
 import salt.version
 from salt.utils.event import tagify
 from salt.exceptions import SaltClientError, SaltSystemExit
-FINGERPRINT_REGEX = re.compile(r'^([a-f0-9]{2}:){15}([a-f0-9]{2})$')
+FINGERPRINT_REGEX = re.compile(r'^([a-f0-9]{2}:){31}([a-f0-9]{2})$')
 
 log = logging.getLogger(__name__)
 
@@ -636,7 +636,7 @@ def lane_stats(estate=None):
     return get_stats(estate=estate, stack='lane')
 
 
-def safe_accept(target, tgt_type='glob'):
+def safe_accept(target, tgt_type='glob', tgt_pki_dir=None):
     '''
     .. versionchanged:: 2017.7.0
         The ``expr_form`` argument has been renamed to ``tgt_type``, earlier
@@ -651,46 +651,32 @@ def safe_accept(target, tgt_type='glob'):
         salt-run manage.safe_accept my_minion
         salt-run manage.safe_accept minion1,minion2 tgt_type=list
     '''
-    salt_key = salt.key.Key(__opts__)
-    ssh_client = salt.client.ssh.client.SSHClient()
+    _kwarg = dict(tgt_pki_dir=tgt_pki_dir)
+    ssh_client = salt.client.ssh.client.SSHClient(mopts=__opts__)
+    ret = ssh_client.cmd(target, 'key.finger', kwarg=_kwarg, tgt_type=tgt_type)
 
-    ret = ssh_client.cmd(target, 'key.finger', tgt_type=tgt_type)
+    ssh_fps = set((k, v['return']) for k, v in ret.items())
+    key_mgr = salt.key.Key(__opts__)
+    fps_x_status = key_mgr.finger_all()
 
-    failures = {}
-    for minion, finger in six.iteritems(ret):
-        if not FINGERPRINT_REGEX.match(finger):
-            failures[minion] = finger
-        else:
-            fingerprints = salt_key.finger(minion)
-            accepted = fingerprints.get('minions', {})
-            pending = fingerprints.get('minions_pre', {})
-            if minion in accepted:
-                del ret[minion]
-                continue
-            elif minion not in pending:
-                failures[minion] = ("Minion key {0} not found by salt-key"
-                                    .format(minion))
-            elif pending[minion] != finger:
-                failures[minion] = ("Minion key {0} does not match the key in "
-                                    "salt-key: {1}"
-                                    .format(finger, pending[minion]))
-            else:
-                subprocess.call(["salt-key", "-qya", minion])
+    ignored_fps = ssh_fps & set(fps_x_status['minions'].items())
+    ssh_fps -= ignored_fps
+    accept_now_fps = ssh_fps & set(fps_x_status['minions_pre'].items())
+    ssh_fps -= accept_now_fps
 
-        if minion in failures:
-            del ret[minion]
+    message = """
+Keys accepted: {0:d}
+Keys ignored (previously accepted): {1:d}
+Keys failed (matched no pending keys): {2:d}
+""".format(len(accept_now_fps), len(ignored_fps), len(ssh_fps))
 
-    if failures:
-        print('safe_accept failed on the following minions:')
-        for minion, message in six.iteritems(failures):
-            print(minion)
-            print('-' * len(minion))
-            print(message)
-            print('')
+    log.debug(message)
 
-    __jid_event__.fire_event({'message': 'Accepted {0:d} keys'.format(len(ret))}, 'progress')
-    return ret, failures
+    for minion_id, _fp in accept_now_fps:
+        key_mgr.accept(minion_id)
 
+    __jid_event__.fire_event({'message': message}, 'progress')
+    return ret, dict(ssh_fps)
 
 def versions():
     '''
