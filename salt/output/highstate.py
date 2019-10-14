@@ -238,7 +238,7 @@ def _format_host(host, data, indent_level=1):
 
             tcolor = colors['GREEN']
             if ret.get('name') in ['state.orch', 'state.orchestrate', 'state.sls']:
-                nested = output(ret['changes']['return'], indent_level=indent_level+1)
+                nested = output(ret.get('changes').get('return', {}), indent_level=indent_level+1)
                 ctext = re.sub('^', ' ' * 14 * indent_level, '\n'+nested, flags=re.MULTILINE)
                 schanged = True
                 nchanges += 1
