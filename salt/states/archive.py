@@ -806,7 +806,7 @@ def extracted(name,
                                 salt.utils.url.redact_http_basic_auth(source_match))
             return ret
 
-    valid_archive_formats = ('tar', 'rar', 'zip')
+    valid_archive_formats = ('tar', 'rar', 'zip', 'xz')
     if not archive_format:
         archive_format = salt.utils.files.guess_archive_type(source_hash_basename)
         if archive_format is None:

@@ -653,6 +653,9 @@ def safe_accept(target, tgt_type='glob', tgt_pki_dir=None):
     '''
     _kwarg = dict(tgt_pki_dir=tgt_pki_dir)
     ssh_client = salt.client.ssh.client.SSHClient(mopts=__opts__)
+    # ret = ssh_client.cmd(target, 'key.finger_master', kwarg=_kwarg, tgt_type=tgt_type)
+    # print(ret)
+
     ret = ssh_client.cmd(target, 'key.finger', kwarg=_kwarg, tgt_type=tgt_type)
 
     ssh_fps = set((k, v['return']) for k, v in ret.items())

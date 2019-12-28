@@ -34,7 +34,7 @@ def finger(hash_type=None, tgt_pki_dir=None):
     return salt.utils.crypt.pem_finger(pki_path, sum_type=hash_type)
 
 
-def finger_master(hash_type=None):
+def finger_master(hash_type=None, tgt_pki_dir=None):
     '''
     Return the fingerprint of the master's public key on the minion.
 
@@ -50,6 +50,8 @@ def finger_master(hash_type=None):
     if hash_type is None:
         hash_type = __opts__['hash_type']
 
-    return salt.utils.crypt.pem_finger(
-        os.path.join(__opts__['pki_dir'], 'minion_master.pub'),
-        sum_type=hash_type)
+    if tgt_pki_dir is None:
+        tgt_pki_dir = __opts__['pki_dir']
+
+    pki_path = os.path.join(tgt_pki_dir, 'minion_master.pub')
+    return salt.utils.crypt.pem_finger(tgt_pki_dir, sum_type=hash_type)

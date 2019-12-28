@@ -250,6 +250,8 @@ def file_list(load):
         prefix = prefix[len(mountpoint + os.path.sep):]
 
     minions_cache_dir = os.path.join(__opts__['cachedir'], 'minions')
+    if not os.path.exists(minions_cache_dir):
+        os.makedirs(minions_cache_dir)
     minion_dirs = os.listdir(minions_cache_dir)
 
     # If the prefix is not an empty string, then get the minion id from it. The
@@ -329,6 +331,8 @@ def dir_list(load):
         prefix = prefix[len(mountpoint + os.path.sep):]
 
     minions_cache_dir = os.path.join(__opts__['cachedir'], 'minions')
+    if not os.path.exists(minions_cache_dir):
+        os.makedirs(minions_cache_dir)
     minion_dirs = os.listdir(minions_cache_dir)
 
     # If the prefix is not an empty string, then get the minion id from it. The
