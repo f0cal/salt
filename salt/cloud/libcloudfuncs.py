@@ -55,36 +55,36 @@ log = logging.getLogger(__name__)
 LIBCLOUD_MINIMAL_VERSION = (0, 14, 0)
 
 
-def node_state(id_):
-    """
-    Libcloud supported node states
-    """
-    states_int = {
-        0: "RUNNING",
-        1: "REBOOTING",
-        2: "TERMINATED",
-        3: "PENDING",
-        4: "UNKNOWN",
-        5: "STOPPED",
-        6: "SUSPENDED",
-        7: "ERROR",
-        8: "PAUSED",
-    }
-    states_str = {
-        "running": "RUNNING",
-        "rebooting": "REBOOTING",
-        "starting": "STARTING",
-        "terminated": "TERMINATED",
-        "pending": "PENDING",
-        "unknown": "UNKNOWN",
-        "stopping": "STOPPING",
-        "stopped": "STOPPED",
-        "suspended": "SUSPENDED",
-        "error": "ERROR",
-        "paused": "PAUSED",
-        "reconfiguring": "RECONFIGURING",
-    }
-    return states_str[id_] if isinstance(id_, six.string_types) else states_int[id_]
+# def node_state(id_):
+#     """
+#     Libcloud supported node states
+#     """
+#     states_int = {
+#         0: "RUNNING",
+#         1: "REBOOTING",
+#         2: "TERMINATED",
+#         3: "PENDING",
+#         4: "UNKNOWN",
+#         5: "STOPPED",
+#         6: "SUSPENDED",
+#         7: "ERROR",
+#         8: "PAUSED",
+#     }
+#     states_str = {
+#         "running": "RUNNING",
+#         "rebooting": "REBOOTING",
+#         "starting": "STARTING",
+#         "terminated": "TERMINATED",
+#         "pending": "PENDING",
+#         "unknown": "UNKNOWN",
+#         "stopping": "STOPPING",
+#         "stopped": "STOPPED",
+#         "suspended": "SUSPENDED",
+#         "error": "ERROR",
+#         "paused": "PAUSED",
+#         "reconfiguring": "RECONFIGURING",
+#     }
+#     return states_str[id_] if isinstance(id_, six.string_types) else states_int[id_]
 
 
 def check_libcloud_version(reqver=LIBCLOUD_MINIMAL_VERSION, why=None):
@@ -461,7 +461,7 @@ def list_nodes(conn=None, call=None):
             "private_ips": node.private_ips,
             "public_ips": node.public_ips,
             "size": node.size,
-            "state": node_state(node.state),
+            "state": str(node.state),
         }
     return ret
 
