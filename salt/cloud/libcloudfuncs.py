@@ -84,8 +84,10 @@ def node_state(id_):
         "paused": "PAUSED",
         "reconfiguring": "RECONFIGURING",
     }
-    id_ = id_.tostring(id_) if hasattr(id_, "tostring") else id_
+    if hasattr(id_, "tostring"):
+        return id_.tostring(id_)
     return states_str[id_] if isinstance(id_, six.string_types) else states_int[id_]
+
 
 def check_libcloud_version(reqver=LIBCLOUD_MINIMAL_VERSION, why=None):
     """
